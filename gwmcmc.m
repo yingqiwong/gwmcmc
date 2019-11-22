@@ -152,9 +152,9 @@ end
 
 if (p.Parallel)
     ParpoolObj = parpool(min([p.Ncores,mccount])); 
-    NumWorkers = ParpoolObj.NumWorkers;
+    p.Ncores = ParpoolObj.NumWorkers;
 else
-    NumWorkers = 0;
+    p.Ncores = 0;
 end
 
 
@@ -239,7 +239,7 @@ for row=1:Nkeep
             %TODO: use SPMD instead of parfor.
 %           %YQW, Nov 22, 2019: added specified number of cores
 
-            parfor (wix=1:Nwalkers, NumWorkers)
+            parfor (wix=1:Nwalkers, p.Ncores)
                 cp=curlogP(:,wix);
                 lr=logrand(:,wix);
                 acceptfullstep=true;
