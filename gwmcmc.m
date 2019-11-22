@@ -33,6 +33,7 @@ function [models,logP]=gwmcmc(minit,logPfuns,mccount,varargin)
 %   'ProgressBar': Show a text progress bar (default=true)
 %   'Parallel': Run in ensemble of walkers in parallel. (default=false)
 %   'BurnIn': fraction of the chain that should be removed. (default=0)
+%   'FileName': save file of models, logP (default = '') added YQW Nov 22, 2019
 %
 % OUTPUTS:
 %    models: A MxWxT matrix with the thinned markov chains (with T samples
@@ -104,6 +105,7 @@ if isoctave
     p=p.addParamValue('ProgressBar',true,@islogical);
     p=p.addParamValue('Parallel',false,@islogical);
     p=p.addParamValue('BurnIn',0,@(x)(x>=0)&&(x<1));
+    p=p.addParamValue('FileName','',@ischar); % adding filename, YQW Nov 22, 2019
     p=p.parse(varargin{:});
 else
     p.addParameter('StepSize',2,@isnumeric); %addParamValue is chose for compatibility with octave. Still Untested.
@@ -111,10 +113,13 @@ else
     p.addParameter('ProgressBar',true,@islogical);
     p.addParameter('Parallel',false,@islogical);
     p.addParameter('BurnIn',0,@(x)(x>=0)&&(x<1));
+    p.addParameter('FileName','',@ischar); % adding filename, YQW Nov 22, 2019
     p.parse(varargin{:});
 end
 p=p.Results;
 
+p.save = 0;
+if ~isempty(p.FileName), p.save = 1; end % adding filename, YQW Nov 22, 2019
 
 Nwalkers=size(minit,2);
 
@@ -233,6 +238,8 @@ for row=1:Nkeep
     end
     models(:,:,row)=curm;
     logP(:,:,row)=curlogP;
+    
+    if (p.save), save(p.FileName, 'models', 'logP'); end
 
     %progress bar
 
