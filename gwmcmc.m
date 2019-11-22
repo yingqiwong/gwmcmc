@@ -1,4 +1,4 @@
-function [models,logP]=gwmcmc(minit,logPfuns,mccount,varargin)
+function [models,logP,dhat]=gwmcmc(minit,logPfuns,mccount,varargin)
 %% Cascaded affine invariant ensemble MCMC sampler. "The MCMC hammer"
 %
 % GWMCMC is an implementation of the Goodman and Weare 2010 Affine
@@ -33,13 +33,20 @@ function [models,logP]=gwmcmc(minit,logPfuns,mccount,varargin)
 %   'ProgressBar': Show a text progress bar (default=true)
 %   'Parallel': Run in ensemble of walkers in parallel. (default=false)
 %   'BurnIn': fraction of the chain that should be removed. (default=0)
-%   'FileName': save file of models, logP (default = '') added YQW Nov 22, 2019
+% 
+%    added YQW Nov 22, 2019
+%   'FileName': save file of models, logP (default='') 
+%   'OutputData': whether to output data into dhat (default=0)
 %
 % OUTPUTS:
 %    models: A MxWxT matrix with the thinned markov chains (with T samples
 %            per walker). T=~mccount/p.ThinChain/W.
 %      logP: A PxWxT matrix of log probabilities for each model in the
 %            models. here P is the number of functions in logPfuns.
+%      dhat: A NdxWxT matrix of the predicted data (for convenience it is
+%            just the 2nd of output of the two probability functions.
+%            priors should output nan, likelihood will output dhat)
+%            Added YQW, Nov 22, 2019
 %
 % Note on cascaded evaluation of log probabilities:
 % The logPfuns-argument can be specifed as a cell-array to allow a cascaded
@@ -106,6 +113,7 @@ if isoctave
     p=p.addParamValue('Parallel',false,@islogical);
     p=p.addParamValue('BurnIn',0,@(x)(x>=0)&&(x<1));
     p=p.addParamValue('FileName','',@ischar); % adding filename, YQW Nov 22, 2019
+    p=p.addParamValue('OutputData',0,@isnumeric);
     p=p.parse(varargin{:});
 else
     p.addParameter('StepSize',2,@isnumeric); %addParamValue is chose for compatibility with octave. Still Untested.
@@ -114,6 +122,7 @@ else
     p.addParameter('Parallel',false,@islogical);
     p.addParameter('BurnIn',0,@(x)(x>=0)&&(x<1));
     p.addParameter('FileName','',@ischar); % adding filename, YQW Nov 22, 2019
+    p.addParameter('OutputData',0,@isnumeric);
     p.parse(varargin{:});
 end
 p=p.Results;
@@ -146,17 +155,41 @@ if ~iscell(logPfuns)
 end
 
 NPfun=numel(logPfuns);
+logP=nan(NPfun,Nwalkers,Nkeep);
+
+% run one set to get sizes of 2nd output (needed to store dhat)
+% added YQW Nov 22, 2019
+dhatTmp = cell(NPfun,1);
+for fix=1:NPfun
+    if p.OutputData
+        [v,dhatTmp{fix}]=logPfuns{fix}(minit(:,1));
+    else
+        v=logPfuns{fix}(minit(:,1));
+    end
+    if islogical(v) %reformulate function so that false=-inf for logical constraints.
+        v=-1/v;logPfuns{fix}=@(m)-1/logPfuns{fix}(m); %experimental implementation of experimental feature
+    end
+    logP(fix,1,1)=v;
+end
+
+dhat = cell(length([dhatTmp{:}]'),Nwalkers,Nkeep);
+dhat(:,1,1) = [dhatTmp{:}]';
 
 %calculate logP state initial pos of walkers
-logP=nan(NPfun,Nwalkers,Nkeep);
-for wix=1:Nwalkers
+for wix=2:Nwalkers
     for fix=1:NPfun
-        v=logPfuns{fix}(minit(:,wix));
+        if p.OutputData
+            [v,dhatTmp{fix}]=logPfuns{fix}(minit(:,1));
+        else
+            v=logPfuns{fix}(minit(:,1));
+        end
+        
         if islogical(v) %reformulate function so that false=-inf for logical constraints.
             v=-1/v;logPfuns{fix}=@(m)-1/logPfuns{fix}(m); %experimental implementation of experimental feature
         end
         logP(fix,wix,1)=v;
     end
+    dhat(:,wix,1) = [dhatTmp{:}]';
 end
 
 if ~all(all(isfinite(logP(:,:,1))))
@@ -169,8 +202,11 @@ reject=zeros(Nwalkers,1);
 
 curm=models(:,:,1);
 curlogP=logP(:,:,1);
+curdhat=dhat(:,:,1);
+
 progress(0,0,0)
 totcount=Nwalkers;
+savecount = 1;
 for row=1:Nkeep
     for jj=1:p.ThinChain
         %generate proposals for all walkers
@@ -191,9 +227,14 @@ for row=1:Nkeep
                 lr=logrand(:,wix);
                 acceptfullstep=true;
                 proposedlogP=nan(NPfun,1);
+                proposeddhat=cell(NPfun,1);
                 if lr(1)<(numel(proposedm(:,wix))-1)*log(zz(wix))
                     for fix=1:NPfun
-                        proposedlogP(fix)=logPfuns{fix}(proposedm(:,wix)); %have tested workerobjwrapper but that is slower.
+                        if p.OutputData
+                            [proposedlogP(fix), proposeddhat{fix}]=logPfuns{fix}(proposedm(:,wix)); %have tested workerobjwrapper but that is slower.
+                        else
+                            proposedlogP(fix)=logPfuns{fix}(proposedm(:,wix)); %have tested workerobjwrapper but that is slower.
+                        end
                         if lr(fix+1)>proposedlogP(fix)-cp(fix) || ~isreal(proposedlogP(fix)) || isnan( proposedlogP(fix) )
                         %if ~(lr(fix+1)<proposedlogP(fix)-cp(fix))
                             acceptfullstep=false;
@@ -204,18 +245,27 @@ for row=1:Nkeep
                     acceptfullstep=false;
                 end
                 if acceptfullstep
-                    curm(:,wix)=proposedm(:,wix); curlogP(:,wix)=proposedlogP;
+                    curm(:,wix)=proposedm(:,wix); 
+                    curlogP(:,wix)=proposedlogP;
+                    curdhat(:,wix)=[proposeddhat{:}]';
                 else
                     reject(wix)=reject(wix)+1;
                 end
             end
+            
+            
         else %NON-PARALLEL
             for wix=1:Nwalkers
                 acceptfullstep=true;
                 proposedlogP=nan(NPfun,1);
+                proposeddhat=cell(NPfun,1);
                 if logrand(1,wix)<(numel(proposedm(:,wix))-1)*log(zz(wix))
                     for fix=1:NPfun
-                        proposedlogP(fix)=logPfuns{fix}(proposedm(:,wix));
+                        if p.OutputData
+                            [proposedlogP(fix), proposeddhat{fix}]=logPfuns{fix}(proposedm(:,wix));
+                        else
+                            proposedlogP(fix)=logPfuns{fix}(proposedm(:,wix));
+                        end
                         if logrand(fix+1,wix)>proposedlogP(fix)-curlogP(fix,wix) || ~isreal(proposedlogP(fix)) || isnan(proposedlogP(fix))
                         %if ~(logrand(fix+1,wix)<proposedlogP(fix)-curlogP(fix,wix)) %inverted expression to ensure rejection of nan and imaginary logP's.
                             acceptfullstep=false;
@@ -226,7 +276,9 @@ for row=1:Nkeep
                     acceptfullstep=false;
                 end
                 if acceptfullstep
-                    curm(:,wix)=proposedm(:,wix); curlogP(:,wix)=proposedlogP;
+                    curm(:,wix)=proposedm(:,wix); 
+                    curlogP(:,wix)=proposedlogP;
+                    curdhat(:,wix)=[proposeddhat{:}]';
                 else
                     reject(wix)=reject(wix)+1;
                 end
@@ -238,8 +290,16 @@ for row=1:Nkeep
     end
     models(:,:,row)=curm;
     logP(:,:,row)=curlogP;
+    dhat(:,:,row)=curdhat;
     
-    if (p.save), save(p.FileName, 'models', 'logP'); end
+    if (p.save)
+        modelsSave = models(:,:,1:row);
+        logpSave   = logP(:,:,1:row);
+        dhatSave   = dhat(:,:,1:row);
+        save(p.FileName, 'modelsSave', 'logpSave', 'dhatSave'); 
+        disp(savecount);
+        savecount = savecount+1;
+    end
 
     %progress bar
 
@@ -249,6 +309,7 @@ if p.BurnIn>0
     crop=ceil(Nkeep*p.BurnIn);
     models(:,:,1:crop)=[]; %TODO: never allocate space for them ?
     logP(:,:,1:crop)=[];
+    dhat(:,:,1:crop)=[];
 end
 
 
