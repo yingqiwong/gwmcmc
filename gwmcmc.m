@@ -44,10 +44,11 @@ function [models,logP,dhat]=gwmcmc(minit,logPfuns,mccount,varargin)
 %            per walker). T=~mccount/p.ThinChain/W.
 %      logP: A PxWxT matrix of log probabilities for each model in the
 %            models. here P is the number of functions in logPfuns.
-%      dhat: A NdxWxT matrix of the predicted data (for convenience it is
+%      dhat: (Added YQW, Nov 22, 2019)
+%            A NdxWxT matrix of the predicted data (for convenience it is
 %            just the 2nd of output of the two probability functions.
 %            priors should output nan, likelihood will output dhat)
-%            Added YQW, Nov 22, 2019
+%            
 %
 % Note on cascaded evaluation of log probabilities:
 % The logPfuns-argument can be specifed as a cell-array to allow a cascaded
@@ -149,6 +150,14 @@ else
     progress=@noaction;
 end
 
+if (p.Parallel)
+    ParpoolObj = parpool(min([p.Ncores,mccount])); 
+    NumWorkers = ParpoolObj.NumWorkers;
+else
+    NumWorkers = 0;
+end
+
+
 
 Nkeep=ceil(mccount/p.ThinChain/Nwalkers); %number of samples drawn from each walker
 mccount=(Nkeep-1)*p.ThinChain+1;
@@ -230,7 +239,7 @@ for row=1:Nkeep
             %TODO: use SPMD instead of parfor.
 %           %YQW, Nov 22, 2019: added specified number of cores
 
-            parfor (wix=1:Nwalkers, p.Ncores)
+            parfor (wix=1:Nwalkers, NumWorkers)
                 cp=curlogP(:,wix);
                 lr=logrand(:,wix);
                 acceptfullstep=true;
@@ -305,6 +314,7 @@ for row=1:Nkeep
         logpSave   = logP(:,:,1:row);
         dhatSave   = dhat(:,:,1:row);
         save(p.FileName, 'modelsSave', 'logpSave', 'dhatSave'); 
+        fprintf('Nkeep = %d. File saved.\n', row);
         disp(savecount);
         savecount = savecount+1;
     end
