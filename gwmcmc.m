@@ -37,6 +37,7 @@ function [models,logP,dhat]=gwmcmc(minit,logPfuns,mccount,varargin)
 %    added YQW Nov 22, 2019
 %   'FileName': save file of models, logP (default='') 
 %   'OutputData': whether to output data into dhat (default=0)
+%   'NCores': number of cores to use if running in parallel (default=2)
 %
 % OUTPUTS:
 %    models: A MxWxT matrix with the thinned markov chains (with T samples
@@ -112,8 +113,11 @@ if isoctave
     p=p.addParamValue('ProgressBar',true,@islogical);
     p=p.addParamValue('Parallel',false,@islogical);
     p=p.addParamValue('BurnIn',0,@(x)(x>=0)&&(x<1));
-    p=p.addParamValue('FileName','',@ischar); % adding filename, YQW Nov 22, 2019
+    
+    % adding filename, OutputData, Ncores. YQW Nov 22, 2019
+    p=p.addParamValue('FileName','',@ischar);
     p=p.addParamValue('OutputData',0,@isnumeric);
+    p=p.addParamValue('Ncores',2,@isnumeric);
     p=p.parse(varargin{:});
 else
     p.addParameter('StepSize',2,@isnumeric); %addParamValue is chose for compatibility with octave. Still Untested.
@@ -121,8 +125,11 @@ else
     p.addParameter('ProgressBar',true,@islogical);
     p.addParameter('Parallel',false,@islogical);
     p.addParameter('BurnIn',0,@(x)(x>=0)&&(x<1));
-    p.addParameter('FileName','',@ischar); % adding filename, YQW Nov 22, 2019
+    
+    % adding filename, OutputData, Ncores. YQW Nov 22, 2019
+    p.addParameter('FileName','',@ischar); 
     p.addParameter('OutputData',0,@isnumeric);
+    p.addParameter('Ncores',2,@isnumeric);
     p.parse(varargin{:});
 end
 p=p.Results;
@@ -221,8 +228,9 @@ for row=1:Nkeep
             %order to enable experimentation with separate optimization
             %techniques for each branch. Parallel is not really great yet.
             %TODO: use SPMD instead of parfor.
+%           %YQW, Nov 22, 2019: added specified number of cores
 
-            parfor wix=1:Nwalkers
+            parfor (wix=1:Nwalkers, p.Ncores)
                 cp=curlogP(:,wix);
                 lr=logrand(:,wix);
                 acceptfullstep=true;
