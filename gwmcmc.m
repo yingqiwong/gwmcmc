@@ -1,4 +1,4 @@
-function [models,logP,dhat]=gwmcmc(minit,logPfuns,mccount,varargin)
+function [models,logP,dhat, RunTime]=gwmcmc(minit,logPfuns,mccount,varargin)
 %% Cascaded affine invariant ensemble MCMC sampler. "The MCMC hammer"
 %
 % GWMCMC is an implementation of the Goodman and Weare 2010 Affine
@@ -163,6 +163,7 @@ Nkeep=ceil(mccount/p.ThinChain/Nwalkers); %number of samples drawn from each wal
 mccount=(Nkeep-1)*p.ThinChain+1;
 
 models=nan(M,Nwalkers,Nkeep); %pre-allocate output matrix
+RunTime = nan(Nwalkers,Nkeep);
 
 models(:,:,1)=minit;
 
@@ -176,6 +177,7 @@ logP=nan(NPfun,Nwalkers,Nkeep);
 % run one set to get sizes of 2nd output (needed to store dhat)
 % added YQW Nov 22, 2019
 dhatTmp = cell(NPfun,1);
+tw = tic;
 for fix=1:NPfun
     if p.OutputData
         [v,dhatTmp{fix}]=logPfuns{fix}(minit(:,1));
@@ -184,11 +186,14 @@ for fix=1:NPfun
     end
     logP(fix,1,1)=v;
 end
+RunTime(1,1) = toc(tw);
 
 dhat = cell(length([dhatTmp{:}]'),Nwalkers,Nkeep);
 dhat(:,1,1) = [dhatTmp{:}]';
 %calculate logP state initial pos of walkers
 parfor (wix=2:Nwalkers, p.Ncores)
+    
+    tw = tic;
     logpinit = nan(NPfun,1);
     dhatinit = cell(NPfun,1);
     
@@ -200,6 +205,8 @@ parfor (wix=2:Nwalkers, p.Ncores)
         end
         
     end
+    
+    RunTime(wix,1) = toc(tw);
     
     logP(:,wix,1) = logpinit;
     dhat(:,wix,1) = [dhatinit{:}]';
@@ -228,6 +235,8 @@ for row=1:Nkeep
         zz=((p.StepSize - 1)*rand(1,Nwalkers) + 1).^2/p.StepSize;
         proposedm=curm(:,rix) - bsxfun(@times,(curm(:,rix)-curm),zz);
         logrand=log(rand(NPfun+1,Nwalkers)); %moved outside because rand is slow inside parfor
+        
+        RunTimeTmp = zeros(Nwalkers,1);
         %parallel/non-parallel code is currently mirrored in
         %order to enable experimentation with separate optimization
         %techniques for each branch. Parallel is not really great yet.
@@ -241,6 +250,7 @@ for row=1:Nkeep
             proposedlogP=nan(NPfun,1);
             proposeddhat=cell(NPfun,1);
             if lr(1)<(numel(proposedm(:,wix))-1)*log(zz(wix))
+                tw = tic;
                 for fix=1:NPfun
                     if p.OutputData
                         [proposedlogP(fix), proposeddhat{fix}]=logPfuns{fix}(proposedm(:,wix)); %have tested workerobjwrapper but that is slower.
@@ -253,6 +263,7 @@ for row=1:Nkeep
                         break
                     end
                 end
+                RunTimeTmp(wix) = toc(tw); 
             else
                 acceptfullstep=false;
             end
@@ -272,12 +283,14 @@ for row=1:Nkeep
     models(:,:,row)=curm;
     logP(:,:,row)=curlogP;
     dhat(:,:,row)=curdhat;
+    RunTime(:,row) = RunTimeTmp;
     
     if (p.save)
         modelsSave = models(:,:,1:row);
         logpSave   = logP(:,:,1:row);
         dhatSave   = dhat(:,:,1:row);
-        save(p.FileName, 'modelsSave', 'logpSave', 'dhatSave');
+        RunTimeSave= RunTime(:,1:row);
+        save(p.FileName, 'modelsSave', 'logpSave', 'dhatSave','RunTimeSave');
         fprintf('Nkeep = %d. File saved.\n', row);
     end
     
