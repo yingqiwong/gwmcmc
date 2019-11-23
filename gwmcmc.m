@@ -33,9 +33,9 @@ function [models,logP,dhat]=gwmcmc(minit,logPfuns,mccount,varargin)
 %   'ProgressBar': Show a text progress bar (default=true)
 %   'Parallel': Run in ensemble of walkers in parallel. (default=false)
 %   'BurnIn': fraction of the chain that should be removed. (default=0)
-% 
+%
 %    added YQW Nov 22, 2019
-%   'FileName': save file of models, logP (default='') 
+%   'FileName': save file of models, logP (default='')
 %   'OutputData': whether to output data into dhat (default=0)
 %   'NCores': number of cores to use if running in parallel (default=2)
 %
@@ -48,7 +48,7 @@ function [models,logP,dhat]=gwmcmc(minit,logPfuns,mccount,varargin)
 %            A NdxWxT matrix of the predicted data (for convenience it is
 %            just the 2nd of output of the two probability functions.
 %            priors should output nan, likelihood will output dhat)
-%            
+%
 %
 % Note on cascaded evaluation of log probabilities:
 % The logPfuns-argument can be specifed as a cell-array to allow a cascaded
@@ -93,9 +93,9 @@ function [models,logP,dhat]=gwmcmc(minit,logPfuns,mccount,varargin)
 % -Aslak Grinsted 2015
 
 
-persistent isoctave;  
+persistent isoctave;
 if isempty(isoctave)
-	isoctave = (exist ('OCTAVE_VERSION', 'builtin') > 0);
+    isoctave = (exist ('OCTAVE_VERSION', 'builtin') > 0);
 end
 
 if nargin<3
@@ -128,7 +128,7 @@ else
     p.addParameter('BurnIn',0,@(x)(x>=0)&&(x<1));
     
     % adding filename, OutputData, Ncores. YQW Nov 22, 2019
-    p.addParameter('FileName','',@ischar); 
+    p.addParameter('FileName','',@ischar);
     p.addParameter('OutputData',0,@isnumeric);
     p.addParameter('Ncores',2,@isnumeric);
     p.parse(varargin{:});
@@ -151,7 +151,7 @@ else
 end
 
 if (p.Parallel)
-    ParpoolObj = parpool(min([p.Ncores,mccount])); 
+    ParpoolObj = parpool(min([p.Ncores,mccount]));
     p.Ncores = ParpoolObj.NumWorkers;
 else
     p.Ncores = 0;
@@ -182,30 +182,27 @@ for fix=1:NPfun
     else
         v=logPfuns{fix}(minit(:,1));
     end
-    if islogical(v) %reformulate function so that false=-inf for logical constraints.
-        v=-1/v;logPfuns{fix}=@(m)-1/logPfuns{fix}(m); %experimental implementation of experimental feature
-    end
     logP(fix,1,1)=v;
 end
 
 dhat = cell(length([dhatTmp{:}]'),Nwalkers,Nkeep);
 dhat(:,1,1) = [dhatTmp{:}]';
-
 %calculate logP state initial pos of walkers
-for wix=2:Nwalkers
+parfor (wix=2:Nwalkers, p.Ncores)
+    logpinit = nan(NPfun,1);
+    dhatinit = cell(NPfun,1);
+    
     for fix=1:NPfun
         if p.OutputData
-            [v,dhatTmp{fix}]=logPfuns{fix}(minit(:,1));
+            [logpinit(fix),dhatinit{fix}]=logPfuns{fix}(minit(:,wix));
         else
-            v=logPfuns{fix}(minit(:,1));
+            logpinit(fix)=logPfuns{fix}(minit(:,wix));
         end
         
-        if islogical(v) %reformulate function so that false=-inf for logical constraints.
-            v=-1/v;logPfuns{fix}=@(m)-1/logPfuns{fix}(m); %experimental implementation of experimental feature
-        end
-        logP(fix,wix,1)=v;
     end
-    dhat(:,wix,1) = [dhatTmp{:}]';
+    
+    logP(:,wix,1) = logpinit;
+    dhat(:,wix,1) = [dhatinit{:}]';
 end
 
 if ~all(all(isfinite(logP(:,:,1))))
@@ -222,7 +219,6 @@ curdhat=dhat(:,:,1);
 
 progress(0,0,0)
 totcount=Nwalkers;
-savecount = 1;
 for row=1:Nkeep
     for jj=1:p.ThinChain
         %generate proposals for all walkers
@@ -232,94 +228,60 @@ for row=1:Nkeep
         zz=((p.StepSize - 1)*rand(1,Nwalkers) + 1).^2/p.StepSize;
         proposedm=curm(:,rix) - bsxfun(@times,(curm(:,rix)-curm),zz);
         logrand=log(rand(NPfun+1,Nwalkers)); %moved outside because rand is slow inside parfor
-        if p.Parallel
-            %parallel/non-parallel code is currently mirrored in
-            %order to enable experimentation with separate optimization
-            %techniques for each branch. Parallel is not really great yet.
-            %TODO: use SPMD instead of parfor.
-%           %YQW, Nov 22, 2019: added specified number of cores
-
-            parfor (wix=1:Nwalkers, p.Ncores)
-                cp=curlogP(:,wix);
-                lr=logrand(:,wix);
-                acceptfullstep=true;
-                proposedlogP=nan(NPfun,1);
-                proposeddhat=cell(NPfun,1);
-                if lr(1)<(numel(proposedm(:,wix))-1)*log(zz(wix))
-                    for fix=1:NPfun
-                        if p.OutputData
-                            [proposedlogP(fix), proposeddhat{fix}]=logPfuns{fix}(proposedm(:,wix)); %have tested workerobjwrapper but that is slower.
-                        else
-                            proposedlogP(fix)=logPfuns{fix}(proposedm(:,wix)); %have tested workerobjwrapper but that is slower.
-                        end
-                        if lr(fix+1)>proposedlogP(fix)-cp(fix) || ~isreal(proposedlogP(fix)) || isnan( proposedlogP(fix) )
+        %         if p.Parallel
+        %parallel/non-parallel code is currently mirrored in
+        %order to enable experimentation with separate optimization
+        %techniques for each branch. Parallel is not really great yet.
+        %TODO: use SPMD instead of parfor.
+        %           %YQW, Nov 22, 2019: added specified number of cores
+        
+        parfor (wix=1:Nwalkers, p.Ncores)
+            cp=curlogP(:,wix);
+            lr=logrand(:,wix);
+            acceptfullstep=true;
+            proposedlogP=nan(NPfun,1);
+            proposeddhat=cell(NPfun,1);
+            if lr(1)<(numel(proposedm(:,wix))-1)*log(zz(wix))
+                for fix=1:NPfun
+                    if p.OutputData
+                        [proposedlogP(fix), proposeddhat{fix}]=logPfuns{fix}(proposedm(:,wix)); %have tested workerobjwrapper but that is slower.
+                    else
+                        proposedlogP(fix)=logPfuns{fix}(proposedm(:,wix)); %have tested workerobjwrapper but that is slower.
+                    end
+                    if lr(fix+1)>proposedlogP(fix)-cp(fix) || ~isreal(proposedlogP(fix)) || isnan( proposedlogP(fix) )
                         %if ~(lr(fix+1)<proposedlogP(fix)-cp(fix))
-                            acceptfullstep=false;
-                            break
-                        end
+                        acceptfullstep=false;
+                        break
                     end
-                else
-                    acceptfullstep=false;
                 end
-                if acceptfullstep
-                    curm(:,wix)=proposedm(:,wix); 
-                    curlogP(:,wix)=proposedlogP;
-                    curdhat(:,wix)=[proposeddhat{:}]';
-                else
-                    reject(wix)=reject(wix)+1;
-                end
+            else
+                acceptfullstep=false;
             end
-            
-            
-        else %NON-PARALLEL
-            for wix=1:Nwalkers
-                acceptfullstep=true;
-                proposedlogP=nan(NPfun,1);
-                proposeddhat=cell(NPfun,1);
-                if logrand(1,wix)<(numel(proposedm(:,wix))-1)*log(zz(wix))
-                    for fix=1:NPfun
-                        if p.OutputData
-                            [proposedlogP(fix), proposeddhat{fix}]=logPfuns{fix}(proposedm(:,wix));
-                        else
-                            proposedlogP(fix)=logPfuns{fix}(proposedm(:,wix));
-                        end
-                        if logrand(fix+1,wix)>proposedlogP(fix)-curlogP(fix,wix) || ~isreal(proposedlogP(fix)) || isnan(proposedlogP(fix))
-                        %if ~(logrand(fix+1,wix)<proposedlogP(fix)-curlogP(fix,wix)) %inverted expression to ensure rejection of nan and imaginary logP's.
-                            acceptfullstep=false;
-                            break
-                        end
-                    end
-                else
-                    acceptfullstep=false;
-                end
-                if acceptfullstep
-                    curm(:,wix)=proposedm(:,wix); 
-                    curlogP(:,wix)=proposedlogP;
-                    curdhat(:,wix)=[proposeddhat{:}]';
-                else
-                    reject(wix)=reject(wix)+1;
-                end
+            if acceptfullstep
+                curm(:,wix)=proposedm(:,wix);
+                curlogP(:,wix)=proposedlogP;
+                curdhat(:,wix)=[proposeddhat{:}]';
+            else
+                reject(wix)=reject(wix)+1;
             end
-
         end
-        totcount=totcount+Nwalkers;
-        progress((row-1+jj/p.ThinChain)/Nkeep,curm,sum(reject)/totcount)
     end
-    models(:,:,row)=curm;
-    logP(:,:,row)=curlogP;
-    dhat(:,:,row)=curdhat;
-    
-    if (p.save)
-        modelsSave = models(:,:,1:row);
-        logpSave   = logP(:,:,1:row);
-        dhatSave   = dhat(:,:,1:row);
-        save(p.FileName, 'modelsSave', 'logpSave', 'dhatSave'); 
-        fprintf('Nkeep = %d. File saved.\n', row);
-        disp(savecount);
-        savecount = savecount+1;
-    end
+    totcount=totcount+Nwalkers;
+    progress((row-1+jj/p.ThinChain)/Nkeep,curm,sum(reject)/totcount)
+end
+models(:,:,row)=curm;
+logP(:,:,row)=curlogP;
+dhat(:,:,row)=curdhat;
 
-    %progress bar
+if (p.save)
+    modelsSave = models(:,:,1:row);
+    logpSave   = logP(:,:,1:row);
+    dhatSave   = dhat(:,:,1:row);
+    save(p.FileName, 'modelsSave', 'logpSave', 'dhatSave');
+    fprintf('Nkeep = %d. File saved.\n', row);
+end
+
+%progress bar
 
 end
 progress(1,0,0);
@@ -347,7 +309,7 @@ if pct==1
     return
 end
 if (cputime-lasttime>0.1)
-
+    
     ETA=datestr((cputime-starttime)*(1-pct)/(pct*60*60*24),13);
     progressmsg=[183-uint8((1:40)<=(pct*40)).*(183-'*') ''];
     %progressmsg=['-'-uint8((1:40)<=(pct*40)).*('-'-'•') ''];
@@ -355,13 +317,13 @@ if (cputime-lasttime>0.1)
     curmtxt=sprintf('% 9.3g\n',curm(1:min(end,20),1));
     %curmtxt=mat2str(curm);
     progressmsg=sprintf('\nGWMCMC %5.1f%% [%s] %s\n%3.0f%% rejected\n%s\n',pct*100,progressmsg,ETA,rejectpct*100,curmtxt);
-
+    
     fprintf('%s%s',repmat(char(8),1,lastNchar),progressmsg);
     drawnow;lasttime=cputime;
     lastNchar=length(progressmsg);
 end
 
-function noaction(varargin)
-
-% Acknowledgements: I became aware of the GW algorithm via a student report
-% which was using emcee for python. Great stuff.
+    function noaction(varargin)
+        
+        % Acknowledgements: I became aware of the GW algorithm via a student report
+        % which was using emcee for python. Great stuff.
