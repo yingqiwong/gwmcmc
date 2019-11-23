@@ -228,7 +228,6 @@ for row=1:Nkeep
         zz=((p.StepSize - 1)*rand(1,Nwalkers) + 1).^2/p.StepSize;
         proposedm=curm(:,rix) - bsxfun(@times,(curm(:,rix)-curm),zz);
         logrand=log(rand(NPfun+1,Nwalkers)); %moved outside because rand is slow inside parfor
-        %         if p.Parallel
         %parallel/non-parallel code is currently mirrored in
         %order to enable experimentation with separate optimization
         %techniques for each branch. Parallel is not really great yet.
@@ -265,24 +264,25 @@ for row=1:Nkeep
                 reject(wix)=reject(wix)+1;
             end
         end
+        
+        
+        totcount=totcount+Nwalkers;
+        progress((row-1+jj/p.ThinChain)/Nkeep,curm,sum(reject)/totcount)
     end
-    totcount=totcount+Nwalkers;
-    progress((row-1+jj/p.ThinChain)/Nkeep,curm,sum(reject)/totcount)
-end
-models(:,:,row)=curm;
-logP(:,:,row)=curlogP;
-dhat(:,:,row)=curdhat;
-
-if (p.save)
-    modelsSave = models(:,:,1:row);
-    logpSave   = logP(:,:,1:row);
-    dhatSave   = dhat(:,:,1:row);
-    save(p.FileName, 'modelsSave', 'logpSave', 'dhatSave');
-    fprintf('Nkeep = %d. File saved.\n', row);
-end
-
-%progress bar
-
+    models(:,:,row)=curm;
+    logP(:,:,row)=curlogP;
+    dhat(:,:,row)=curdhat;
+    
+    if (p.save)
+        modelsSave = models(:,:,1:row);
+        logpSave   = logP(:,:,1:row);
+        dhatSave   = dhat(:,:,1:row);
+        save(p.FileName, 'modelsSave', 'logpSave', 'dhatSave');
+        fprintf('Nkeep = %d. File saved.\n', row);
+    end
+    
+    %progress bar
+    
 end
 progress(1,0,0);
 if p.BurnIn>0
@@ -323,7 +323,7 @@ if (cputime-lasttime>0.1)
     lastNchar=length(progressmsg);
 end
 
-    function noaction(varargin)
-        
-        % Acknowledgements: I became aware of the GW algorithm via a student report
-        % which was using emcee for python. Great stuff.
+function noaction(varargin)
+
+% Acknowledgements: I became aware of the GW algorithm via a student report
+% which was using emcee for python. Great stuff.
